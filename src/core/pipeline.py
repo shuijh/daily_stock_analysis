@@ -26,6 +26,7 @@ from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
+from src.gold_analyzer import GoldTrendAnalyzer
 from bot.models import BotMessage
 
 
@@ -71,7 +72,8 @@ class StockAnalysisPipeline:
         self.db = get_db()
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
-        self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
+        self.stock_trend_analyzer = StockTrendAnalyzer()  # 股票趋势分析器
+        self.gold_trend_analyzer = GoldTrendAnalyzer()    # 黄金趋势分析器
         self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
         
@@ -212,9 +214,17 @@ class StockAnalysisPipeline:
                     raw_data = context['raw_data']
                     if isinstance(raw_data, list) and len(raw_data) > 0:
                         df = pd.DataFrame(raw_data)
-                        trend_result = self.trend_analyzer.analyze(df, code)
-                        logger.info(f"[{code}] 趋势分析: {trend_result.trend_status.value}, "
-                                  f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                        # 根据代码选择合适的分析器
+                        if code in ['Au9999', 'GC=F', 'GLD'] or 'gold' in code.lower():
+                            # 使用黄金分析器
+                            trend_result = self.gold_trend_analyzer.analyze(df, code)
+                            logger.info(f"[{code}] 黄金趋势分析: {trend_result.trend_status.value}, "
+                                      f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
+                        else:
+                            # 使用股票分析器
+                            trend_result = self.stock_trend_analyzer.analyze(df, code)
+                            logger.info(f"[{code}] 股票趋势分析: {trend_result.trend_status.value}, "
+                                      f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
             except Exception as e:
                 logger.warning(f"[{code}] 趋势分析失败: {e}")
             
