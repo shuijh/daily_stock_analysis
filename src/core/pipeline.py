@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import List, Dict, Any, Optional, Tuple
+import pandas as pd
 
 from src.config import get_config, Config
 from src.storage import get_db
@@ -27,6 +28,7 @@ from src.search_service import SearchService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.gold_analyzer import GoldTrendAnalyzer
+from src.ai_macro_analyzer import AIGoldMacroAnalyzer, get_ai_analyzer
 from bot.models import BotMessage
 
 
@@ -76,6 +78,22 @@ class StockAnalysisPipeline:
         self.gold_trend_analyzer = GoldTrendAnalyzer()    # 黄金趋势分析器
         self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
+        
+        # 初始化AI黄金宏观分析器
+        self.ai_gold_analyzer = None
+        try:
+            # 尝试使用配置的API Key
+            ai_analyzer = get_ai_analyzer(
+                api_provider="gemini",
+                api_key=self.config.gemini_api_key
+            )
+            if ai_analyzer:
+                self.ai_gold_analyzer = AIGoldMacroAnalyzer(ai_analyzer)
+                logger.info("AI黄金宏观分析器初始化成功")
+            else:
+                logger.info("AI黄金宏观分析器未初始化（未配置API Key）")
+        except Exception as e:
+            logger.warning(f"初始化AI黄金宏观分析器失败: {e}")
         
         # 初始化搜索服务
         self.search_service = SearchService(
@@ -145,6 +163,102 @@ class StockAnalysisPipeline:
             error_msg = f"获取/保存数据失败: {str(e)}"
             logger.error(f"[{code}] {error_msg}")
             return False, error_msg
+    
+    def analyze_gold(self, code: str = "GC=F") -> Dict[str, Any]:
+        """
+        分析黄金（增强版：含技术分析、宏观数据、AI分析）
+        
+        流程：
+        1. 获取黄金历史数据
+        2. 技术分析（使用GoldTrendAnalyzer）
+        3. 获取宏观数据（使用GoldMacroAnalyzer）
+        4. 搜索宏观新闻（使用SearchService）
+        5. AI综合分析（使用AIGoldMacroAnalyzer）
+        6. 整合结果
+        
+        Args:
+            code: 黄金代码（默认GC=F）
+            
+        Returns:
+            包含完整分析结果的字典
+        """
+        try:
+            logger.info(f"开始分析黄金: {code}")
+            
+            # Step 1: 获取黄金历史数据
+            df = self.fetcher_manager.get_daily_data(code, days=60)
+            if df is None or df.empty:
+                logger.error(f"获取黄金数据失败: {code}")
+                return {"error": "获取黄金数据失败"}
+            
+            # Step 2: 技术分析
+            logger.info(f"[{code}] 开始技术分析")
+            technical_result = self.gold_trend_analyzer.analyze_with_macro(df, code)
+            
+            # 提取技术分析数据
+            technical_data = {
+                "trend_status": technical_result.trend_status.value,
+                "trend_strength": technical_result.trend_strength,
+                "ma_alignment": technical_result.ma_alignment,
+                "current_price": technical_result.current_price,
+                "signal_score": technical_result.signal_score,
+                "buy_signal": technical_result.buy_signal.value,
+                "signal_reasons": technical_result.signal_reasons,
+                "risk_factors": technical_result.risk_factors
+            }
+            
+            # Step 3: 获取宏观数据
+            logger.info(f"[{code}] 开始宏观数据分析")
+            macro_data = {}
+            if hasattr(technical_result, 'macro_score') and technical_result.macro_score:
+                macro_data = {
+                    "total_score": technical_result.macro_score,
+                    "summary": getattr(technical_result, 'macro_summary', ''),
+                    "factors": getattr(technical_result, 'macro_factors', {})
+                }
+            
+            # Step 4: 搜索宏观新闻
+            macro_news = {}
+            if self.search_service.is_available:
+                logger.info(f"[{code}] 开始宏观新闻搜索")
+                macro_news = self.search_service.search_gold_macro_news(max_results=3)
+            
+            # Step 5: AI综合分析
+            ai_analysis = ""
+            if self.ai_gold_analyzer:
+                logger.info(f"[{code}] 开始AI综合分析")
+                try:
+                    ai_analysis = self.ai_gold_analyzer.generate_investment_report(
+                        technical_data,
+                        macro_data,
+                        macro_news
+                    )
+                except Exception as e:
+                    logger.warning(f"AI分析失败: {e}")
+                    ai_analysis = {"error": str(e)}
+            
+            # Step 6: 整合结果
+            result = {
+                "code": code,
+                "name": "黄金",
+                "timestamp": df.index[-1].isoformat() if not df.empty else "",
+                "technical": {
+                    "analysis": technical_result,
+                    "formatted": self.gold_trend_analyzer.format_analysis(technical_result)
+                },
+                "macro": macro_data,
+                "news": macro_news,
+                "ai_analysis": ai_analysis,
+                "generated_at": pd.Timestamp.now().isoformat()
+            }
+            
+            logger.info(f"黄金分析完成: {code}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"黄金分析失败: {e}")
+            logger.exception("详细错误信息:")
+            return {"error": str(e)}
     
     def analyze_stock(self, code: str, report_type: ReportType) -> Optional[AnalysisResult]:
         """

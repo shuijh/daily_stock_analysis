@@ -9,18 +9,46 @@
 系统已经内置了黄金分析功能，主要修改包括：
 
 - **`src/gold_analyzer.py`** - 黄金趋势分析器，针对黄金特性优化
+- **`src/macro_data_provider.py`** - 宏观数据获取模块，获取美元指数、利率等宏观数据
+- **`src/ai_macro_analyzer.py`** - AI驱动的宏观分析模块，使用大语言模型分析宏观影响
+- **`src/search_service.py`** - 搜索服务，支持黄金宏观因素新闻搜索
 - **`src/core/pipeline.py`** - 分析流水线，支持自动识别黄金相关资产
 
 ### 2. GitHub Actions 配置
 
 在 GitHub 仓库的 **Settings > Secrets and variables > Actions** 中配置以下参数：
 
+#### 基础配置
+
 | 配置项 | 类型 | 说明 | 示例值 |
 |-------|------|------|--------|
 | **STOCK_LIST** | 变量/密钥 | 自选股列表，包含黄金相关代码 | `600519,Au9999,GC=F,GLD` |
-| **GEMINI_API_KEY** | 密钥 | Gemini AI API Key（用于综合分析） | - |
+
+#### AI 模型配置（二选一）
+
+| 配置项 | 类型 | 说明 | 必填 |
+|-------|------|------|------|
+| **GEMINI_API_KEY** | 密钥 | [Google AI Studio](https://aistudio.google.com/app/apikey) 获取免费 Key | ✅ 推荐 |
+| **OPENAI_API_KEY** | 密钥 | OpenAI 兼容 API Key（支持 DeepSeek、通义千问等） | 可选 |
+| **OPENAI_BASE_URL** | 密钥 | OpenAI 兼容 API 地址（如 `https://api.deepseek.com/v1`） | 可选 |
+| **OPENAI_MODEL** | 变量 | 模型名称（如 `deepseek-chat`） | 可选 |
+
+> **注：** `GEMINI_API_KEY` 和 `OPENAI_API_KEY` 至少配置一个
+
+#### 新闻搜索配置
+
+| 配置项 | 类型 | 说明 | 示例值 |
+|-------|------|------|--------|
 | **TAVILY_API_KEYS** | 密钥 | Tavily 搜索 API（用于新闻搜索） | - |
 | **BOCHA_API_KEYS** | 密钥 | 博查搜索 API（用于中文搜索） | - |
+
+#### 技术栈与数据来源
+
+| 类型 | 支持 |
+|------|------|
+| **AI 模型** | Gemini（免费）、OpenAI 兼容、DeepSeek、通义千问、Claude、Ollama |
+| **行情数据** | AkShare、Tushare、Pytdx、Baostock、YFinance |
+| **新闻搜索** | Tavily、SerpAPI、Bocha |
 
 ## 🚀 配置步骤
 
@@ -49,10 +77,10 @@ STOCK_LIST: ${{ vars.STOCK_LIST || secrets.STOCK_LIST || '600519,Au9999,GC=F' }}
 git status
 
 # 添加新文件
-git add src/gold_analyzer.py src/core/pipeline.py .github/workflows/daily_analysis.yml
+git add src/gold_analyzer.py src/macro_data_provider.py src/ai_macro_analyzer.py src/core/pipeline.py .github/workflows/daily_analysis.yml
 
 # 提交更改
-git commit -m "添加黄金分析功能"
+git commit -m "添加黄金分析功能（含技术分析、宏观数据、AI分析）"
 
 # 推送至 GitHub
 git push origin main
@@ -197,8 +225,88 @@ else:
 3. **数据获取** - 获取 `STOCK_LIST` 中所有资产的数据
 4. **资产识别** - 自动识别黄金相关资产和股票
 5. **分析执行** - 对不同类型资产使用相应的分析器
+   - 黄金资产：技术分析 + 宏观数据分析 + AI综合分析
+   - 股票资产：技术分析
 6. **报告生成** - 生成包含所有资产的综合分析报告
 7. **结果推送** - 推送到配置的通知渠道
+
+## 🌍 宏观因素分析
+
+系统通过三阶段改进计划，实现了全面的黄金宏观因素分析：
+
+### Phase 1: 新闻宏观因素搜索
+
+系统通过搜索服务获取最新的黄金宏观因素新闻：
+
+- **美联储政策** - 利率决策、货币政策声明
+- **美元指数** - DXY走势对黄金的影响
+- **通胀数据** - CPI、PPI等通胀指标
+- **地缘政治** - 国际局势、避险情绪
+- **央行购金** - 各国央行黄金储备变化
+
+### Phase 2: 结构化宏观数据分析
+
+系统自动获取并分析以下宏观数据：
+
+| 数据类型 | 数据源 | 更新频率 | 影响方向 |
+|---------|--------|---------|---------|
+| **美元指数(DXY)** | Yahoo Finance | 1小时缓存 | 负相关 |
+| **实际利率** | FRED API | 24小时缓存 | 负相关 |
+| **通胀预期** | FRED API | 24小时缓存 | 正相关 |
+| **VIX波动率** | Yahoo Finance | 1小时缓存 | 正相关 |
+| **央行购金** | World Gold Council | 月度 | 正相关 |
+| **地缘政治风险** | 新闻分析 | 实时 | 正相关 |
+
+**宏观评分计算**：
+- 各因素评分范围：0-100分
+- 综合宏观评分 = 各因素评分的加权平均
+- 技术评分权重 60%，宏观评分权重 40%
+
+### Phase 3: AI驱动的宏观分析
+
+系统使用大语言模型（Gemini/OpenAI）进行智能分析：
+
+**AI分析流程**：
+1. 整合技术分析结果
+2. 整合结构化宏观数据
+3. 整合宏观新闻信息
+4. 生成综合分析报告
+
+**AI分析输出**：
+- 当前宏观环境对黄金的整体影响
+- 关键驱动因素分析（2-3个最重要因素）
+- 短期（1-2周）价格走势预判
+- 投资建议（仓位、入场时机、止损策略）
+- 风险提示
+
+### 宏观分析结果示例
+
+```
+=== 黄金宏观因素分析 ===
+
+📊 综合宏观评分: 65/100 (偏多)
+
+📈 关键宏观因素:
+   美元指数: 103.5 (+0.2%) → 利空黄金 (评分: 40)
+   实际利率: 1.8% → 中性 (评分: 50)
+   通胀预期: 3.2% → 利好黄金 (评分: 70)
+   VIX指数: 18.5 → 中性 (评分: 55)
+   央行购金: 2024年Q1增加290吨 → 利好黄金 (评分: 80)
+   地缘风险: 中东局势紧张 → 利好黄金 (评分: 75)
+
+🤖 AI宏观分析:
+   当前宏观环境整体偏多黄金。虽然美元指数保持强势对黄金构成
+   一定压力，但通胀数据支撑和地缘政治风险上升为黄金提供了
+   有力支撑。各国央行持续增持黄金储备，显示长期看好黄金。
+   
+   短期预判: 黄金可能在当前区间震荡整理，等待美联储政策明朗化
+   
+   投资建议: 维持适度仓位，可在回调至关键支撑位时加仓
+   
+   风险提示: 需关注美联储利率决议和美元指数走势
+
+💡 宏观因素总结: 通胀支撑 + 地缘避险 - 美元压制 = 中性偏多
+```
 
 ## 🔧 高级配置
 
@@ -213,7 +321,102 @@ VOLUME_SHRINK_RATIO = 0.7   # 缩量判断阈值
 VOLUME_HEAVY_RATIO = 1.8    # 放量判断阈值
 ```
 
-### 2. 添加更多黄金相关资产
+### 2. 调整宏观数据权重
+
+可以在 `src/gold_analyzer.py` 中调整宏观因素权重：
+
+```python
+# 在 analyze_with_macro 方法中
+# 新闻评分权重 30%，结构化数据评分权重 70%
+total_macro_score = int(macro_news_score * 0.3 + macro_data_score * 0.7)
+
+# 技术评分权重 60%，宏观评分权重 40%
+result.signal_score = int(result.signal_score * 0.6 + total_macro_score * 0.4)
+```
+
+### 3. 配置AI分析模型
+
+可以在 `src/ai_macro_analyzer.py` 中选择不同的AI模型：
+
+#### 方案一：使用 Gemini（推荐，免费）
+
+```python
+from src.ai_macro_analyzer import GeminiAnalyzer, AIGoldMacroAnalyzer
+
+# 从环境变量读取 API Key
+import os
+api_key = os.getenv('GEMINI_API_KEY')
+
+analyzer = GeminiAnalyzer(api_key=api_key)
+ai_gold_analyzer = AIGoldMacroAnalyzer(analyzer)
+```
+
+**GitHub Actions 配置：**
+- 添加 Secret: `GEMINI_API_KEY` = 你的 Gemini API Key
+- 获取地址: [Google AI Studio](https://aistudio.google.com/app/apikey)
+
+#### 方案二：使用 OpenAI 兼容模型
+
+```python
+from src.ai_macro_analyzer import OpenAIAnalyzer, AIGoldMacroAnalyzer
+
+import os
+api_key = os.getenv('OPENAI_API_KEY')
+base_url = os.getenv('OPENAI_BASE_URL')  # 可选，用于兼容其他服务商
+model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')  # 可选，默认模型
+
+analyzer = OpenAIAnalyzer(
+    api_key=api_key,
+    base_url=base_url,
+    model=model
+)
+ai_gold_analyzer = AIGoldMacroAnalyzer(analyzer)
+```
+
+**GitHub Actions 配置：**
+
+| 服务商 | OPENAI_API_KEY | OPENAI_BASE_URL | OPENAI_MODEL |
+|--------|---------------|-----------------|--------------|
+| **OpenAI** | sk-... | 不设置 | gpt-3.5-turbo / gpt-4 |
+| **DeepSeek** | sk-... | `https://api.deepseek.com/v1` | deepseek-chat |
+| **通义千问** | sk-... | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-turbo |
+| **其他** | 对应Key | 服务商提供的base_url | 对应模型名 |
+
+#### 方案三：使用其他AI模型（需扩展）
+
+系统支持通过扩展 `BaseAIAnalyzer` 类来集成其他AI模型：
+
+```python
+from src.ai_macro_analyzer import BaseAIAnalyzer
+
+class ClaudeAnalyzer(BaseAIAnalyzer):
+    def __init__(self, api_key):
+        super().__init__()
+        self.api_key = api_key
+        # 初始化 Claude 客户端
+    
+    def generate_response(self, prompt: str) -> str:
+        # 调用 Claude API
+        pass
+
+# 使用
+analyzer = ClaudeAnalyzer(api_key="your-claude-api-key")
+ai_gold_analyzer = AIGoldMacroAnalyzer(analyzer)
+```
+
+### 4. 配置宏观数据缓存
+
+可以在 `src/macro_data_provider.py` 中调整缓存时间：
+
+```python
+# 获取美元指数（缓存1小时）
+dxy_data = self._get_cached_data(cache_key, max_age=3600)
+
+# 获取通胀数据（缓存24小时）
+inflation_data = self._get_cached_data(cache_key, max_age=86400)
+```
+
+### 5. 添加更多黄金相关资产
 
 在 `src/core/pipeline.py` 中可以添加更多黄金相关资产的识别：
 
@@ -223,7 +426,7 @@ if code in ['Au9999', 'GC=F', 'GLD', 'GOLD', 'NEM'] or 'gold' in code.lower():
     trend_result = self.gold_trend_analyzer.analyze(df, code)
 ```
 
-### 3. 配置通知渠道
+### 6. 配置通知渠道
 
 可以在 GitHub Actions 中配置多种通知渠道：
 
@@ -240,7 +443,10 @@ daily_stock_analysis/
 │   └── workflows/
 │       └── daily_analysis.yml    # GitHub Actions 工作流
 ├── src/
-│   ├── gold_analyzer.py          # 黄金趋势分析器
+│   ├── gold_analyzer.py          # 黄金趋势分析器（含宏观分析集成）
+│   ├── macro_data_provider.py    # 宏观数据获取模块
+│   ├── ai_macro_analyzer.py      # AI驱动的宏观分析模块
+│   ├── search_service.py         # 搜索服务（支持黄金宏观新闻）
 │   └── core/
 │       └── pipeline.py           # 分析流水线
 ├── docs/
@@ -256,6 +462,26 @@ daily_stock_analysis/
 - 调整了乖离率阈值（从 5% 改为 3%）
 - 调整了量能判断阈值（从 1.5 改为 1.8）
 - 添加了黄金特有的市场提示
+- 集成了宏观因素分析（美元指数、利率、通胀等）
+- 集成了AI驱动的智能分析
+
+### Q: 宏观数据是如何获取和更新的？
+
+**A:** 系统通过以下方式获取宏观数据：
+- **实时数据**（Yahoo Finance）：美元指数、VIX、国债收益率，缓存1小时
+- **每日数据**（FRED API）：实际利率、通胀预期，缓存24小时
+- **新闻数据**（搜索服务）：宏观新闻，实时获取
+- **月度数据**（World Gold Council）：央行购金数据，缓存30天
+
+系统会自动管理缓存，确保数据新鲜度同时避免频繁API调用。
+
+### Q: AI分析需要额外配置吗？
+
+**A:** AI分析是可选功能，需要配置以下API Key之一：
+- **Gemini API Key** - 推荐，响应速度快，免费额度充足
+- **OpenAI API Key** - 备选，分析质量高但成本较高
+
+如果没有配置AI API Key，系统仍会进行技术分析和宏观数据分析，只是不会生成AI综合分析报告。
 
 ### Q: 如何添加新的黄金相关资产？
 
@@ -267,14 +493,24 @@ daily_stock_analysis/
 - 确保所有必要的 API Key 已正确配置
 - 确保 `STOCK_LIST` 格式正确，无多余空格
 - 查看 GitHub Actions 日志，了解具体错误信息
+- 检查宏观数据API是否可用（FRED、Yahoo Finance等）
+- 如果使用AI分析，确保AI API Key有效且有足够额度
 
 ## 🎯 总结
 
 通过本指南的配置，您的股票分析系统将能够：
 
 - ✅ 自动识别和分析黄金相关资产
-- ✅ 为黄金资产提供专业的分析建议
+- ✅ 为黄金资产提供专业的技术分析
+- ✅ 获取和分析宏观因素数据（美元指数、利率、通胀等）
+- ✅ 搜索和分析宏观新闻
+- ✅ 使用AI生成智能分析报告
 - ✅ 在 GitHub Actions 中定期执行黄金分析
 - ✅ 生成包含黄金和股票的综合分析报告
+
+**三阶段改进计划已完成**：
+1. ✅ Phase 1: 扩展搜索服务，添加黄金宏观因素搜索
+2. ✅ Phase 2: 创建宏观数据获取模块，集成宏观分析
+3. ✅ Phase 3: 创建AI驱动的宏观分析模块，集成到分析流水线
 
 祝您投资顺利！

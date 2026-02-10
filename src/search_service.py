@@ -715,6 +715,34 @@ class SearchService:
         "{name} {code} 涨跌 成交量",
     ]
     
+    # 黄金专用宏观因素搜索查询
+    GOLD_MACRO_SEARCH_QUERIES = {
+        "美联储政策": [
+            "美联储利率决议 黄金影响",
+            "美联储加息降息预期",
+            "鲍威尔讲话 黄金价格",
+            "美联储点阵图 黄金",
+        ],
+        "美元指数": [
+            "美元指数 DXY 走势 黄金",
+            "美元强弱 黄金价格关系",
+        ],
+        "通胀数据": [
+            "美国CPI数据 黄金反应",
+            "美国PCE通胀 黄金价格",
+            "通胀预期 黄金走势",
+        ],
+        "地缘政治": [
+            "地缘政治风险 避险资产",
+            "国际冲突 黄金避险需求",
+            "全球经济不确定性 黄金",
+        ],
+        "央行购金": [
+            "央行购金 黄金储备",
+            "世界黄金协会 央行黄金需求",
+        ],
+    }
+    
     def __init__(
         self,
         bocha_keys: Optional[List[str]] = None,
@@ -1172,6 +1200,62 @@ class SearchService:
                 max_results=max_results
             )
         
+        return results
+    
+    def search_gold_macro_news(self, max_results: int = 3) -> Dict[str, SearchResponse]:
+        """
+        搜索黄金宏观因素相关新闻
+        
+        Returns:
+            {因素类别: SearchResponse} 字典
+        """
+        results = {}
+        
+        for factor_category, queries in self.GOLD_MACRO_SEARCH_QUERIES.items():
+            category_results = []
+            seen_urls = set()
+            
+            for query in queries[:2]:  # 每个类别最多搜索2个查询
+                logger.info(f"搜索黄金宏观因素: {factor_category} - {query}")
+                
+                for provider in self._providers:
+                    if not provider.is_available:
+                        continue
+                    
+                    try:
+                        response = provider.search(query, max_results=3, days=7)
+                        
+                        if response.success and response.results:
+                            # 去重并添加结果
+                            for result in response.results:
+                                if result.url not in seen_urls:
+                                    seen_urls.add(result.url)
+                                    category_results.append(result)
+                                    if len(category_results) >= max_results:
+                                        break
+                            
+                            if len(category_results) >= max_results:
+                                break
+                    except Exception as e:
+                        logger.warning(f"搜索黄金宏观因素失败: {e}")
+                        continue
+                
+                if len(category_results) >= max_results:
+                    break
+                
+                # 短暂延迟
+                time.sleep(0.3)
+            
+            # 构建类别响应
+            if category_results:
+                provider_str = "混合来源"
+                results[factor_category] = SearchResponse(
+                    query=f"{factor_category} 黄金",
+                    results=category_results,
+                    provider=provider_str,
+                    success=True
+                )
+            
         return results
 
     def format_price_search_context(self, response: SearchResponse) -> str:

@@ -25,6 +25,8 @@ import pandas as pd
 import numpy as np
 
 from .stock_analyzer import StockTrendAnalyzer, TrendStatus, VolumeStatus, BuySignal, MACDStatus, RSIStatus, TrendAnalysisResult
+from .search_service import get_search_service, SearchResponse
+from .macro_data_provider import GoldMacroAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,8 @@ class GoldTrendAnalyzer(StockTrendAnalyzer):
     def __init__(self):
         """初始化黄金分析器"""
         super().__init__()
+        self.search_service = get_search_service()
+        self.macro_analyzer = GoldMacroAnalyzer()
         logger.info("初始化黄金趋势分析器")
     
     def _analyze_volume(self, df: pd.DataFrame, result: TrendAnalysisResult) -> None:
@@ -130,6 +134,129 @@ class GoldTrendAnalyzer(StockTrendAnalyzer):
             # 黄金卖出信号可能需要更谨慎判断
             result.risk_factors.append("⚠️ 黄金卖出信号，需考虑避险需求对价格的支撑")
     
+    def _analyze_macro_factors(self, macro_news: dict) -> dict:
+        """
+        分析宏观因素对黄金的影响
+        
+        Args:
+            macro_news: 宏观新闻搜索结果
+            
+        Returns:
+            包含宏观分析结果的字典
+        """
+        factors = {}
+        total_score = 50
+        
+        # 利好关键词
+        bullish_keywords = ['加息', '通胀', '地缘政治', '避险', '央行购金', '不确定性']
+        # 利空关键词
+        bearish_keywords = ['降息', '经济强劲', '美元走强', '通胀缓解']
+        
+        for category, response in macro_news.items():
+            if not response.success or not response.results:
+                continue
+            
+            category_score = 50
+            bullish_count = 0
+            bearish_count = 0
+            
+            for result in response.results:
+                content = f"{result.title} {result.snippet}"
+                # 统计关键词
+                for kw in bullish_keywords:
+                    if kw in content:
+                        bullish_count += 1
+                for kw in bearish_keywords:
+                    if kw in content:
+                        bearish_count += 1
+            
+            # 计算得分
+            if bullish_count > bearish_count:
+                category_score = min(80, 50 + (bullish_count - bearish_count) * 10)
+            elif bearish_count > bullish_count:
+                category_score = max(20, 50 - (bearish_count - bullish_count) * 10)
+            
+            factors[category] = {
+                'score': category_score,
+                'bullish_count': bullish_count,
+                'bearish_count': bearish_count
+            }
+            total_score += (category_score - 50) * 0.1
+        
+        total_score = max(0, min(100, total_score))
+        
+        return {
+            'total_score': round(total_score),
+            'factors': factors,
+            'timestamp': pd.Timestamp.now().isoformat()
+        }
+    
+    def analyze_with_macro(self, df: pd.DataFrame, code: str) -> TrendAnalysisResult:
+        """
+        带宏观因素的黄金分析
+        
+        Args:
+            df: 包含 OHLCV 数据的 DataFrame
+            code: 黄金代码
+            
+        Returns:
+            TrendAnalysisResult 分析结果
+        """
+        # 1. 执行基础技术分析
+        result = self.analyze(df, code)
+        
+        # 2. 获取宏观新闻
+        macro_news_score = 50
+        try:
+            if self.search_service and self.search_service.is_available:
+                logger.info(f"搜索黄金宏观因素新闻")
+                macro_news = self.search_service.search_gold_macro_news(max_results=3)
+                
+                if macro_news:
+                    # 分析新闻宏观因素
+                    news_analysis = self._analyze_macro_factors(macro_news)
+                    macro_news_score = news_analysis['total_score']
+                    result.macro_news = macro_news
+                    logger.info(f"新闻宏观因素分析完成，总评分: {macro_news_score}")
+                else:
+                    logger.info("未获取到宏观新闻数据")
+            else:
+                logger.info("搜索服务不可用，跳过新闻宏观因素分析")
+        except Exception as e:
+            logger.warning(f"获取宏观新闻失败: {e}")
+        
+        # 3. 获取结构化宏观数据
+        macro_data_score = 50
+        try:
+            logger.info(f"获取黄金宏观数据")
+            macro_data = self.macro_analyzer.get_macro_score()
+            
+            if macro_data:
+                macro_data_score = macro_data['total_score']
+                result.macro_score = macro_data_score
+                result.macro_factors = macro_data['factors']
+                result.macro_summary = macro_data['summary']
+                result.macro_timestamp = macro_data['timestamp']
+                logger.info(f"结构化宏观数据分析完成，总评分: {macro_data_score}")
+            else:
+                logger.info("未获取到结构化宏观数据")
+        except Exception as e:
+            logger.warning(f"获取结构化宏观数据失败: {e}")
+        
+        # 4. 计算综合宏观评分
+        # 新闻评分权重 30%，结构化数据评分权重 70%
+        total_macro_score = int(macro_news_score * 0.3 + macro_data_score * 0.7)
+        total_macro_score = max(0, min(100, total_macro_score))
+        
+        # 5. 调整综合评分
+        # 技术评分权重 60%，宏观评分权重 40%
+        result.signal_score = int(result.signal_score * 0.6 + total_macro_score * 0.4)
+        result.signal_score = max(0, min(100, result.signal_score))
+        
+        logger.info(f"综合宏观评分: {total_macro_score}, 最终信号评分: {result.signal_score}")
+        
+        return result
+    
     def format_analysis(self, result: TrendAnalysisResult) -> str:
         """
         格式化黄金分析结果为文本
@@ -192,22 +319,63 @@ class GoldTrendAnalyzer(StockTrendAnalyzer):
         lines.append(f"   - 黄金价格受全球宏观经济、地缘政治等因素影响较大")
         lines.append(f"   - 黄金趋势一旦形成，往往持续时间较长")
 
+        # 添加宏观因素分析
+        if hasattr(result, 'macro_score') and result.macro_score is not None:
+            lines.append(f"")
+            lines.append(f"🌍 宏观因素分析:")
+            lines.append(f"   综合评分: {result.macro_score}/100")
+            
+            if hasattr(result, 'macro_summary') and result.macro_summary:
+                lines.append(f"   分析总结: {result.macro_summary}")
+            
+            if hasattr(result, 'macro_factors') and result.macro_factors:
+                lines.append(f"   关键因素:")
+                for factor_name, factor_data in result.macro_factors.items():
+                    score = factor_data['score']
+                    value = factor_data.get('value', 'N/A')
+                    change = factor_data.get('change', '')
+                    change_str = f" (变化{change}%)" if change else ""
+                    emoji = "📈" if score > 60 else "📉" if score < 40 else "➡️"
+                    lines.append(f"   {emoji} {factor_name}: {value}{change_str} ({score}/100)")
+            
+            if hasattr(result, 'macro_news') and result.macro_news:
+                lines.append(f"")
+                lines.append(f"📰 宏观新闻摘要:")
+                news_count = 0
+                for category, response in result.macro_news.items():
+                    if response.success and response.results:
+                        for i, news in enumerate(response.results[:1]):  # 每个类别只显示1条新闻
+                            if news_count >= 3:
+                                break
+                            lines.append(f"   • {news.title[:80]}")
+                            news_count += 1
+                        if news_count >= 3:
+                            break
+            
+            if hasattr(result, 'macro_timestamp'):
+                lines.append(f"")
+                lines.append(f"   🕒 数据时间: {result.macro_timestamp[:19]}")
+
         return "\n".join(lines)
 
 
-def analyze_gold(df: pd.DataFrame, code: str) -> TrendAnalysisResult:
+def analyze_gold(df: pd.DataFrame, code: str, include_macro: bool = True) -> TrendAnalysisResult:
     """
     便捷函数：分析黄金数据
     
     Args:
         df: 包含 OHLCV 数据的 DataFrame
         code: 黄金代码
+        include_macro: 是否包含宏观因素分析
         
     Returns:
         TrendAnalysisResult 分析结果
     """
     analyzer = GoldTrendAnalyzer()
-    return analyzer.analyze(df, code)
+    if include_macro:
+        return analyzer.analyze_with_macro(df, code)
+    else:
+        return analyzer.analyze(df, code)
 
 
 if __name__ == "__main__":
