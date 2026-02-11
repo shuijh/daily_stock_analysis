@@ -155,7 +155,41 @@ def _is_us_code(stock_code: str) -> bool:
     import re
     code = stock_code.strip().upper()
     # 美股：1-5个大写字母，可能包含一个点和字母（如 BRK.B）
+    # 排除期货代码（包含=）
+    if '=' in code:
+        return False
     return bool(re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code))
+
+
+def _is_gold_code(stock_code: str) -> bool:
+    """
+    判断代码是否为黄金相关代码
+
+    支持的黄金代码：
+    - Au9999: 上海黄金交易所黄金现货
+    - GC=F: COMEX黄金期货
+    - GLD: SPDR黄金ETF
+    - IAU: iShares黄金信托
+
+    Args:
+        stock_code: 股票代码
+
+    Returns:
+        True 表示是黄金代码，False 表示不是黄金代码
+
+    Examples:
+        >>> _is_gold_code('Au9999')
+        True
+        >>> _is_gold_code('GC=F')
+        True
+        >>> _is_gold_code('GLD')
+        True
+        >>> _is_gold_code('600519')
+        False
+    """
+    code = stock_code.strip().upper()
+    gold_codes = {'AU9999', 'GC=F', 'GLD', 'IAU'}
+    return code in gold_codes or code.startswith('GC=')
 
 
 class AkshareFetcher(BaseFetcher):
@@ -237,17 +271,20 @@ class AkshareFetcher(BaseFetcher):
         - 美股：使用 ak.stock_us_daily()
         - 港股：使用 ak.stock_hk_hist()
         - ETF 基金：使用 ak.fund_etf_hist_em()
+        - 黄金：使用 ak.spot_hist_sge() 或 ak.futures_zh_daily()
         - 普通 A 股：使用 ak.stock_zh_a_hist()
         
         流程：
-        1. 判断代码类型（美股/港股/ETF/A股）
+        1. 判断代码类型（美股/港股/ETF/黄金/A股）
         2. 设置随机 User-Agent
         3. 执行速率限制（随机休眠）
         4. 调用对应的 akshare API
         5. 处理返回数据
         """
         # 根据代码类型选择不同的获取方法
-        if _is_us_code(stock_code):
+        if _is_gold_code(stock_code):
+            return self._fetch_gold_data(stock_code, start_date, end_date)
+        elif _is_us_code(stock_code):
             return self._fetch_us_data(stock_code, start_date, end_date)
         elif _is_hk_code(stock_code):
             return self._fetch_hk_data(stock_code, start_date, end_date)
@@ -487,7 +524,119 @@ class AkshareFetcher(BaseFetcher):
                 raise RateLimitError(f"Akshare 可能被限流: {e}") from e
             
             raise DataFetchError(f"Akshare 获取 ETF 数据失败: {e}") from e
-    
+
+    def _fetch_gold_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        获取黄金历史数据
+
+        根据黄金代码类型选择不同的获取方法：
+        - Au9999: 使用 ak.spot_hist_sge() 获取上海黄金交易所数据
+        - GC=F, GLD, IAU: 通过抛出异常让 yfinance 处理
+
+        Args:
+            stock_code: 黄金代码，如 'Au9999', 'GC=F', 'GLD'
+            start_date: 开始日期，格式 'YYYY-MM-DD'
+            end_date: 结束日期，格式 'YYYY-MM-DD'
+
+        Returns:
+            黄金历史数据 DataFrame
+        """
+        import akshare as ak
+
+        code = stock_code.strip().upper()
+
+        # 防封禁策略 1: 随机 User-Agent
+        self._set_random_user_agent()
+
+        # 防封禁策略 2: 强制休眠
+        self._enforce_rate_limit()
+
+        # 上海黄金交易所 Au9999
+        if code == 'AU9999':
+            logger.info(f"[API调用] ak.spot_hist_sge(symbol=Au9999)")
+            try:
+                import time as _time
+                api_start = _time.time()
+
+                # 调用 akshare 获取上海黄金交易所数据
+                # 注意：akshare 的 spot_hist_sge 返回特定格式的数据
+                df = ak.spot_hist_sge(symbol="Au9999")
+
+                api_elapsed = _time.time() - api_start
+
+                if df is not None and not df.empty:
+                    logger.info(f"[API返回] ak.spot_hist_sge 成功: 返回 {len(df)} 行数据, 耗时 {api_elapsed:.2f}s")
+                    logger.info(f"[API返回] 列名: {list(df.columns)}")
+
+                    # 重命名列以匹配标准格式
+                    # spot_hist_sge 返回的列名可能不同，需要适配
+                    column_mapping = {}
+                    if '日期' in df.columns:
+                        column_mapping['日期'] = 'date'
+                    if '开盘价' in df.columns:
+                        column_mapping['开盘价'] = 'open'
+                    if '最高价' in df.columns:
+                        column_mapping['最高价'] = 'high'
+                    if '最低价' in df.columns:
+                        column_mapping['最低价'] = 'low'
+                    if '收盘价' in df.columns:
+                        column_mapping['收盘价'] = 'close'
+                    if '成交量' in df.columns:
+                        column_mapping['成交量'] = 'volume'
+
+                    if column_mapping:
+                        df = df.rename(columns=column_mapping)
+
+                    # 确保日期列存在并转换格式
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'])
+                    elif '日期' in df.columns:
+                        df['date'] = pd.to_datetime(df['日期'])
+
+                    # 按日期过滤
+                    start_dt = pd.to_datetime(start_date)
+                    end_dt = pd.to_datetime(end_date)
+                    df = df[(df['date'] >= start_dt) & (df['date'] <= end_dt)]
+
+                    if not df.empty:
+                        logger.info(f"[API返回] 过滤后日期范围: {df['date'].iloc[0].strftime('%Y-%m-%d')} ~ {df['date'].iloc[-1].strftime('%Y-%m-%d')}")
+
+                    # 转换回中文列名以匹配 _normalize_data
+                    rename_map = {
+                        'date': '日期',
+                        'open': '开盘',
+                        'high': '最高',
+                        'low': '最低',
+                        'close': '收盘',
+                        'volume': '成交量',
+                    }
+                    df = df.rename(columns=rename_map)
+
+                    # 计算涨跌幅
+                    if '收盘' in df.columns:
+                        df['涨跌幅'] = df['收盘'].pct_change() * 100
+                        df['涨跌幅'] = df['涨跌幅'].fillna(0)
+
+                    # 估算成交额
+                    if '成交量' in df.columns and '收盘' in df.columns:
+                        df['成交额'] = df['成交量'] * df['收盘']
+                    else:
+                        df['成交额'] = 0
+
+                    return df
+                else:
+                    raise DataFetchError(f"ak.spot_hist_sge 返回空数据: {stock_code}")
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.error(f"[API错误] ak.spot_hist_sge 失败: {e}")
+                raise DataFetchError(f"Akshare 获取黄金数据失败: {e}") from e
+
+        # 其他黄金代码（GC=F, GLD, IAU）不支持通过akshare获取，抛出异常让yfinance处理
+        else:
+            logger.warning(f"黄金代码 {code} 不支持通过 Akshare 获取，将尝试其他数据源")
+            raise DataFetchError(f"Akshare 不支持黄金代码: {stock_code}，请使用 yfinance 数据源")
+
     def _fetch_us_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
         获取美股历史数据

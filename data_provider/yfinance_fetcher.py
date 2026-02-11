@@ -67,11 +67,14 @@ class YfinanceFetcher(BaseFetcher):
         Yahoo Finance 代码格式：
         - A股沪市：600519.SS (Shanghai Stock Exchange)
         - A股深市：000001.SZ (Shenzhen Stock Exchange)
-        - 港股：0700.HK (Hong Kong Stock Exchange)
+        - 港股：0700.HK (Hong Kong Exchange)
         - 美股：AAPL, TSLA, GOOGL (无需后缀)
+        - 黄金期货：GC=F (COMEX黄金)
+        - 黄金ETF：GLD, IAU
+        - 上海黄金：Au9999 -> SGE.Au9999 (通过akshare获取)
 
         Args:
-            stock_code: 原始代码，如 '600519', 'hk00700', 'AAPL'
+            stock_code: 原始代码，如 '600519', 'hk00700', 'AAPL', 'GC=F', 'Au9999'
 
         Returns:
             Yahoo Finance 格式代码
@@ -83,10 +86,17 @@ class YfinanceFetcher(BaseFetcher):
             '0700.HK'
             >>> fetcher._convert_stock_code('AAPL')
             'AAPL'
+            >>> fetcher._convert_stock_code('GC=F')
+            'GC=F'
         """
         import re
 
         code = stock_code.strip().upper()
+
+        # 黄金期货代码（如 GC=F, SI=F）直接返回
+        if '=' in code:
+            logger.debug(f"识别为期货代码: {code}")
+            return code
 
         # 美股：1-5个大写字母（可能包含 .），直接返回
         if re.match(r'^[A-Z]{1,5}(\.[A-Z])?$', code):
@@ -99,6 +109,11 @@ class YfinanceFetcher(BaseFetcher):
             hk_code = hk_code.zfill(4)  # 补齐到4位
             logger.debug(f"转换港股代码: {stock_code} -> {hk_code}.HK")
             return f"{hk_code}.HK"
+
+        # 上海黄金交易所代码 Au9999 - 使用akshare获取，yfinance不支持
+        if code == 'AU9999':
+            logger.warning(f"上海黄金交易所代码 {code} 不支持通过Yahoo Finance获取，请使用akshare数据源")
+            raise DataFetchError(f"Yahoo Finance 不支持上海黄金交易所代码: {stock_code}")
 
         # 已经包含后缀的情况
         if '.SS' in code or '.SZ' in code or '.HK' in code:
