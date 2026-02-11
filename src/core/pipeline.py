@@ -184,9 +184,10 @@ class StockAnalysisPipeline:
         """
         try:
             logger.info(f"开始分析黄金: {code}")
-            
+
             # Step 1: 获取黄金历史数据
-            df = self.fetcher_manager.get_daily_data(code, days=60)
+            # get_daily_data 返回 (DataFrame, source_name) 元组
+            df, source = self.fetcher_manager.get_daily_data(code, days=60)
             if df is None or df.empty:
                 logger.error(f"获取黄金数据失败: {code}")
                 return {"error": "获取黄金数据失败"}
