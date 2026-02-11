@@ -245,12 +245,17 @@ def run_full_analysis(
             save_context_snapshot=save_context_snapshot
         )
         
-        # 1. 运行个股分析
-        results = pipeline.run(
+        # 1. 运行个股分析（包含股票和黄金）
+        analysis_results = pipeline.run(
             stock_codes=stock_codes,
             dry_run=args.dry_run,
             send_notification=not args.no_notify
         )
+
+        # 提取股票和黄金分析结果
+        stock_results = analysis_results.get('stock_results', [])
+        gold_results = analysis_results.get('gold_results', [])
+        all_results = analysis_results.get('all_results', [])
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
@@ -271,23 +276,35 @@ def run_full_analysis(
             # 如果有结果，赋值给 market_report 用于后续飞书文档生成
             if review_result:
                 market_report = review_result
-        
+
         # 输出摘要
-        if results:
-            logger.info("\n===== 分析结果摘要 =====")
-            for r in sorted(results, key=lambda x: x.sentiment_score, reverse=True):
+        if stock_results:
+            logger.info("\n===== 股票分析结果摘要 =====")
+            for r in sorted(stock_results, key=lambda x: x.sentiment_score, reverse=True):
                 emoji = r.get_emoji()
                 logger.info(
                     f"{emoji} {r.name}({r.code}): {r.operation_advice} | "
                     f"评分 {r.sentiment_score} | {r.trend_prediction}"
                 )
-        
+
+        if gold_results:
+            logger.info("\n===== 黄金分析结果摘要 =====")
+            for gr in gold_results:
+                code = gr.get('code', 'Unknown')
+                tech = gr.get('technical', {})
+                analysis = tech.get('analysis', None)
+                if analysis:
+                    score = getattr(analysis, 'signal_score', 50)
+                    signal = getattr(analysis, 'buy_signal', None)
+                    signal_value = signal.value if signal else '观望'
+                    logger.info(f"🥇 {code}: {signal_value} | 评分 {score}")
+
         logger.info("\n任务执行完成")
 
         # === 新增：生成飞书云文档 ===
         try:
             feishu_doc = FeishuDocManager()
-            if feishu_doc.is_configured() and (results or market_report):
+            if feishu_doc.is_configured() and (stock_results or gold_results or market_report):
                 logger.info("正在创建飞书云文档...")
 
                 # 1. 准备标题 "01-01 13:01大盘复盘"
@@ -302,9 +319,14 @@ def run_full_analysis(
                 if market_report:
                     full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
 
-                # 添加个股决策仪表盘（使用 NotificationService 生成）
-                if results:
-                    dashboard_content = pipeline.notifier.generate_dashboard_report(results)
+                # 添加个股和黄金决策仪表盘（使用 NotificationService 生成）
+                if stock_results or gold_results:
+                    if gold_results:
+                        # 如果有黄金结果，使用包含黄金的报告生成方法
+                        dashboard_content = pipeline.notifier.generate_dashboard_report_with_gold(stock_results, gold_results)
+                    else:
+                        # 只有股票结果
+                        dashboard_content = pipeline.notifier.generate_dashboard_report(stock_results)
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 
                 # 3. 创建文档

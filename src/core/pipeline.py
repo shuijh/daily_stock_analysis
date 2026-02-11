@@ -717,27 +717,32 @@ class StockAnalysisPipeline:
             return None
     
     def run(
-        self, 
+        self,
         stock_codes: Optional[List[str]] = None,
         dry_run: bool = False,
         send_notification: bool = True
-    ) -> List[AnalysisResult]:
+    ) -> Dict[str, Any]:
         """
         运行完整的分析流程
-        
+
         流程：
         1. 获取待分析的股票列表
         2. 使用线程池并发处理
-        3. 收集分析结果
+        3. 收集分析结果（包括股票和黄金）
         4. 发送通知
-        
+
         Args:
             stock_codes: 股票代码列表（可选，默认使用配置中的自选股）
             dry_run: 是否仅获取数据不分析
             send_notification: 是否发送推送通知
-            
+
         Returns:
-            分析结果列表
+            包含分析结果的字典，格式：
+            {
+                'stock_results': List[AnalysisResult],  # 股票分析结果
+                'gold_results': List[Dict[str, Any]],   # 黄金分析结果
+                'all_results': List[Any]                 # 所有结果的合并列表
+            }
         """
         start_time = time.time()
         
@@ -859,8 +864,13 @@ class StockAnalysisPipeline:
                 self._send_notifications(results, gold_results, skip_push=True)
             else:
                 self._send_notifications(results, gold_results)
-        
-        return results
+
+        # 返回包含股票和黄金结果的完整字典
+        return {
+            'stock_results': results,
+            'gold_results': gold_results,
+            'all_results': results + gold_results  # 合并所有结果
+        }
     
     def _send_notifications(self, results: List[AnalysisResult], gold_results: List[Dict[str, Any]] = None, skip_push: bool = False) -> None:
         """

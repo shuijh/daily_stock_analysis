@@ -113,13 +113,17 @@ class BatchCommand(BotCommand):
             )
             
             # 执行分析（会自动推送汇总报告）
-            results = pipeline.run(
+            analysis_results = pipeline.run(
                 stock_codes=stock_list,
                 dry_run=False,
                 send_notification=True
             )
-            
-            logger.info(f"[BatchCommand] 批量分析完成，成功 {len(results)} 只")
+
+            stock_results = analysis_results.get('stock_results', [])
+            gold_results = analysis_results.get('gold_results', [])
+            total_count = len(stock_results) + len(gold_results)
+
+            logger.info(f"[BatchCommand] 批量分析完成，股票 {len(stock_results)} 只，黄金 {len(gold_results)} 只，总计 {total_count} 只")
             
         except Exception as e:
             logger.error(f"[BatchCommand] 批量分析失败: {e}")
