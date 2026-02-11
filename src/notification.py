@@ -830,6 +830,246 @@ class NotificationService:
         ])
         
         return "\n".join(report_lines)
+
+    def generate_dashboard_report_with_gold(
+        self,
+        results: List[AnalysisResult],
+        gold_results: List[Dict[str, Any]],
+        report_date: Optional[str] = None
+    ) -> str:
+        """
+        生成包含黄金分析的决策仪表盘日报
+        
+        格式：市场概览 + 股票分析 + 黄金分析（含宏观因素）
+        
+        Args:
+            results: 股票分析结果列表
+            gold_results: 黄金分析结果列表
+            report_date: 报告日期（默认今天）
+            
+        Returns:
+            Markdown 格式的完整日报
+        """
+        # 首先生成股票部分的报告
+        stock_report = self.generate_dashboard_report(results, report_date)
+        
+        # 然后生成黄金部分的报告
+        gold_report_lines = []
+        
+        if gold_results:
+            gold_report_lines.extend([
+                "",
+                "---",
+                "",
+                "# 🥇 黄金投资分析",
+                "",
+                "> 基于技术分析、宏观数据和AI智能分析",
+                "",
+            ])
+            
+            for gold_result in gold_results:
+                gold_report_lines.extend(
+                    self._format_gold_analysis(gold_result)
+                )
+        
+        gold_report = "\n".join(gold_report_lines)
+        
+        return stock_report + gold_report
+
+    def _format_gold_analysis(self, gold_result: Dict[str, Any]) -> List[str]:
+        """
+        格式化单个黄金分析结果为Markdown
+        
+        Args:
+            gold_result: 黄金分析结果字典
+            
+        Returns:
+            Markdown格式的行列表
+        """
+        lines = []
+        
+        code = gold_result.get('code', 'Unknown')
+        name = gold_result.get('name', '黄金')
+        technical = gold_result.get('technical', {})
+        macro = gold_result.get('macro', {})
+        news = gold_result.get('news', {})
+        ai_analysis = gold_result.get('ai_analysis', {})
+        
+        # 获取技术分析结果
+        tech_analysis = technical.get('analysis', None)
+        
+        lines.extend([
+            f"## 🥇 {name} ({code})",
+            "",
+        ])
+        
+        # ========== 核心结论 ==========
+        if tech_analysis:
+            signal_score = getattr(tech_analysis, 'signal_score', 50)
+            buy_signal = getattr(tech_analysis, 'buy_signal', None)
+            signal_value = buy_signal.value if buy_signal else '观望'
+            
+            # 确定信号表情
+            if signal_score >= 70:
+                signal_emoji = '🟢'
+                signal_text = '强烈买入'
+            elif signal_score >= 60:
+                signal_emoji = '🟢'
+                signal_text = '买入'
+            elif signal_score >= 40:
+                signal_emoji = '🟡'
+                signal_text = '观望'
+            else:
+                signal_emoji = '🔴'
+                signal_text = '卖出'
+            
+            lines.extend([
+                f"### 📌 核心结论",
+                "",
+                f"**{signal_emoji} {signal_text}** | 综合评分: {signal_score}/100",
+                "",
+            ])
+            
+            # AI分析总结
+            if isinstance(ai_analysis, dict) and 'ai_analysis' in ai_analysis:
+                ai_text = ai_analysis['ai_analysis']
+                if ai_text and not isinstance(ai_text, dict):
+                    lines.extend([
+                        f"**🤖 AI分析**: {ai_text[:200]}..." if len(str(ai_text)) > 200 else f"**🤖 AI分析**: {ai_text}",
+                        "",
+                    ])
+        
+        # ========== 宏观因素分析 ==========
+        if macro:
+            lines.extend([
+                "### 🌍 宏观因素分析",
+                "",
+            ])
+            
+            macro_score = macro.get('total_score', 50)
+            macro_summary = macro.get('summary', '')
+            factors = macro.get('factors', {})
+            
+            # 宏观评分
+            macro_emoji = '📈' if macro_score > 60 else '📉' if macro_score < 40 else '➡️'
+            lines.append(f"**宏观综合评分**: {macro_emoji} {macro_score}/100")
+            
+            if macro_summary:
+                lines.append(f"**分析总结**: {macro_summary}")
+            lines.append("")
+            
+            # 评分详情（如果有详细评分数据）
+            if tech_analysis and hasattr(tech_analysis, 'technical_score'):
+                tech_score = getattr(tech_analysis, 'technical_score', 50)
+                news_score = getattr(tech_analysis, 'macro_news_score', 50)
+                data_score = getattr(tech_analysis, 'macro_data_score', 50)
+                total_macro = getattr(tech_analysis, 'total_macro_score', 50)
+                
+                lines.extend([
+                    "**评分详情**:",
+                    "",
+                    f"- 技术评分: {tech_score}/100 (权重60%)",
+                    f"- 宏观评分: {total_macro}/100 (权重40%)",
+                    f"  - 新闻评分: {news_score}/100 (权重30%)",
+                    f"  - 数据评分: {data_score}/100 (权重70%)",
+                    "",
+                ])
+            
+            # 评分权重说明
+            lines.extend([
+                "**评分权重说明**:",
+                "",
+                "```",
+                "综合评分 = 技术评分 × 60% + 宏观评分 × 40%",
+                "",
+                "宏观评分 = 新闻评分 × 30% + 数据评分 × 70%",
+                "```",
+                "",
+            ])
+            
+            # 关键因素详情
+            if factors:
+                lines.extend([
+                    "**关键因素详情**:",
+                    "",
+                    "| 因素 | 数值 | 影响 | 评分 |",
+                    "|------|------|------|------|",
+                ])
+                
+                factor_names = {
+                    'dxy': '美元指数',
+                    'real_rate': '实际利率',
+                    'inflation': '通胀预期',
+                    'vix': 'VIX波动率',
+                    'central_bank': '央行购金',
+                    'geopolitical': '地缘政治'
+                }
+                
+                for factor_key, factor_data in factors.items():
+                    factor_name = factor_names.get(factor_key, factor_key)
+                    value = factor_data.get('value', 'N/A')
+                    impact = factor_data.get('impact', 'neutral')
+                    score = factor_data.get('score', 50)
+                    
+                    # 影响中文映射
+                    impact_map = {
+                        'strongly_bullish': '强利好',
+                        'bullish': '利好',
+                        'slightly_bullish': '偏利好',
+                        'neutral': '中性',
+                        'bearish': '利空',
+                        'strongly_bearish': '强利空'
+                    }
+                    impact_cn = impact_map.get(impact, impact)
+                    
+                    lines.append(f"| {factor_name} | {value} | {impact_cn} | {score} |")
+                
+                lines.append("")
+        
+        # ========== 宏观新闻摘要 ==========
+        if news:
+            lines.extend([
+                "### 📰 宏观新闻摘要",
+                "",
+            ])
+            
+            news_count = 0
+            for category, response in news.items():
+                if hasattr(response, 'results') and response.results:
+                    for news_item in response.results[:1]:  # 每个类别只显示1条
+                        if news_count >= 5:  # 最多显示5条
+                            break
+                        title = getattr(news_item, 'title', '')
+                        if title:
+                            lines.append(f"- **{category}**: {title[:80]}...")
+                            news_count += 1
+                    if news_count >= 5:
+                        break
+            
+            if news_count == 0:
+                lines.append("- 暂无相关宏观新闻")
+            
+            lines.append("")
+        
+        # ========== 技术分析详情 ==========
+        if technical and 'formatted' in technical:
+            tech_formatted = technical['formatted']
+            if tech_formatted:
+                lines.extend([
+                    "### 📊 技术分析",
+                    "",
+                    "```",
+                    tech_formatted,
+                    "```",
+                    "",
+                ])
+        
+        lines.extend([
+            "---",
+            "",
+        ])
+        
+        return lines
     
     def generate_wechat_dashboard(self, results: List[AnalysisResult]) -> str:
         """

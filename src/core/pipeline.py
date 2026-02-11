@@ -594,6 +594,30 @@ class StockAnalysisPipeline:
             return "web"
         return "system"
 
+    def _is_gold_code(self, code: str) -> bool:
+        """
+        判断是否为黄金代码
+        
+        支持的黄金代码:
+        - Au9999: 上海黄金交易所黄金9999
+        - GC=F: COMEX黄金期货
+        - GLD: SPDR黄金ETF
+        - IAU: iShares黄金信托
+        - 518880: 华安黄金ETF(国内)
+        - 159934: 易方达黄金ETF(国内)
+        
+        Args:
+            code: 股票/期货代码
+            
+        Returns:
+            是否为黄金代码
+        """
+        gold_codes = {
+            'Au9999', 'GC=F', 'GLD', 'IAU', 
+            '518880', '159934', '518800', '159937'
+        }
+        return code in gold_codes or 'gold' in code.lower()
+
     def _build_query_context(self) -> Dict[str, str]:
         """
         生成用户查询关联信息
@@ -748,12 +772,25 @@ class StockAnalysisPipeline:
         if single_stock_notify:
             logger.info(f"已启用单股推送模式：每分析完一只股票立即推送（报告类型: {report_type_str}）")
         
-        results: List[AnalysisResult] = []
+        # 分离黄金代码和普通股票代码
+        gold_codes = []
+        stock_codes_list = []
+        for code in stock_codes:
+            if self._is_gold_code(code):
+                gold_codes.append(code)
+            else:
+                stock_codes_list.append(code)
         
-        # 使用线程池并发处理
+        if gold_codes:
+            logger.info(f"识别到黄金代码: {', '.join(gold_codes)}")
+        
+        results: List[AnalysisResult] = []
+        gold_results: List[Dict[str, Any]] = []
+        
+        # 使用线程池并发处理普通股票
         # 注意：max_workers 设置较低（默认3）以避免触发反爬
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 提交任务
+            # 提交普通股票任务
             future_to_code = {
                 executor.submit(
                     self.process_single_stock,
@@ -762,10 +799,10 @@ class StockAnalysisPipeline:
                     single_stock_notify=single_stock_notify and send_notification,
                     report_type=report_type  # Issue #119: 传递报告类型
                 ): code
-                for code in stock_codes
+                for code in stock_codes_list
             }
             
-            # 收集结果
+            # 收集普通股票结果
             for idx, future in enumerate(as_completed(future_to_code)):
                 code = future_to_code[future]
                 try:
@@ -774,12 +811,30 @@ class StockAnalysisPipeline:
                         results.append(result)
 
                     # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
-                    if idx < len(stock_codes) - 1 and analysis_delay > 0:
+                    if idx < len(stock_codes_list) - 1 and analysis_delay > 0:
                         logger.debug(f"等待 {analysis_delay} 秒后继续下一只股票...")
                         time.sleep(analysis_delay)
 
                 except Exception as e:
                     logger.error(f"[{code}] 任务执行失败: {e}")
+        
+        # 单独处理黄金代码（使用专门的黄金分析方法）
+        if not dry_run and gold_codes:
+            logger.info(f"===== 开始分析 {len(gold_codes)} 个黄金品种 =====")
+            for code in gold_codes:
+                try:
+                    gold_result = self.analyze_gold(code)
+                    if gold_result and "error" not in gold_result:
+                        gold_results.append(gold_result)
+                        logger.info(f"[{code}] 黄金分析完成")
+                    else:
+                        logger.warning(f"[{code}] 黄金分析失败: {gold_result.get('error', '未知错误')}")
+                    
+                    # 分析间隔
+                    if analysis_delay > 0:
+                        time.sleep(analysis_delay)
+                except Exception as e:
+                    logger.error(f"[{code}] 黄金分析异常: {e}")
         
         # 统计
         elapsed_time = time.time() - start_time
@@ -790,38 +845,46 @@ class StockAnalysisPipeline:
             success_count = sum(1 for code in stock_codes if self.db.has_today_data(code))
             fail_count = len(stock_codes) - success_count
         else:
-            success_count = len(results)
+            success_count = len(results) + len(gold_results)
             fail_count = len(stock_codes) - success_count
         
         logger.info("===== 分析完成 =====")
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
         
         # 发送通知（单股推送模式下跳过汇总推送，避免重复）
-        if results and send_notification and not dry_run:
+        if (results or gold_results) and send_notification and not dry_run:
             if single_stock_notify:
                 # 单股推送模式：只保存汇总报告，不再重复推送
                 logger.info("单股推送模式：跳过汇总推送，仅保存报告到本地")
-                self._send_notifications(results, skip_push=True)
+                self._send_notifications(results, gold_results, skip_push=True)
             else:
-                self._send_notifications(results)
+                self._send_notifications(results, gold_results)
         
         return results
     
-    def _send_notifications(self, results: List[AnalysisResult], skip_push: bool = False) -> None:
+    def _send_notifications(self, results: List[AnalysisResult], gold_results: List[Dict[str, Any]] = None, skip_push: bool = False) -> None:
         """
         发送分析结果通知
         
-        生成决策仪表盘格式的报告
+        生成决策仪表盘格式的报告，包含股票和黄金分析结果
         
         Args:
-            results: 分析结果列表
+            results: 股票分析结果列表
+            gold_results: 黄金分析结果列表（可选）
             skip_push: 是否跳过推送（仅保存到本地，用于单股推送模式）
         """
+        gold_results = gold_results or []
+        
         try:
             logger.info("生成决策仪表盘日报...")
             
-            # 生成决策仪表盘格式的详细日报
-            report = self.notifier.generate_dashboard_report(results)
+            # 生成决策仪表盘格式的详细日报（包含股票和黄金）
+            if gold_results:
+                # 如果有黄金分析结果，使用专门的报告生成方法
+                report = self.notifier.generate_dashboard_report_with_gold(results, gold_results)
+            else:
+                # 只有股票分析结果
+                report = self.notifier.generate_dashboard_report(results)
             
             # 保存到本地
             filepath = self.notifier.save_report_to_file(report)

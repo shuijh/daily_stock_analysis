@@ -248,12 +248,21 @@ class GoldTrendAnalyzer(StockTrendAnalyzer):
         total_macro_score = int(macro_news_score * 0.3 + macro_data_score * 0.7)
         total_macro_score = max(0, min(100, total_macro_score))
         
+        # 保存原始技术评分和各项宏观评分（用于报告展示）
+        original_technical_score = result.signal_score  # 保存技术评分
+        result.technical_score = original_technical_score  # 技术评分（调整前）
+        result.macro_news_score = macro_news_score  # 新闻评分
+        result.macro_data_score = macro_data_score  # 数据评分
+        result.total_macro_score = total_macro_score  # 综合宏观评分
+        
         # 5. 调整综合评分
         # 技术评分权重 60%，宏观评分权重 40%
-        result.signal_score = int(result.signal_score * 0.6 + total_macro_score * 0.4)
+        result.signal_score = int(original_technical_score * 0.6 + total_macro_score * 0.4)
         result.signal_score = max(0, min(100, result.signal_score))
         
-        logger.info(f"综合宏观评分: {total_macro_score}, 最终信号评分: {result.signal_score}")
+        logger.info(f"技术评分: {original_technical_score}, 新闻评分: {macro_news_score}, "
+                   f"数据评分: {macro_data_score}, 综合宏观评分: {total_macro_score}, "
+                   f"最终信号评分: {result.signal_score}")
         
         return result
     
@@ -323,6 +332,18 @@ class GoldTrendAnalyzer(StockTrendAnalyzer):
         if hasattr(result, 'macro_score') and result.macro_score is not None:
             lines.append(f"")
             lines.append(f"🌍 宏观因素分析:")
+            
+            # 显示评分详情（如果有）
+            if hasattr(result, 'technical_score'):
+                lines.append(f"   评分详情:")
+                lines.append(f"   - 技术评分: {result.technical_score}/100 (权重60%)")
+                lines.append(f"   - 宏观评分: {result.total_macro_score}/100 (权重40%)")
+                if hasattr(result, 'macro_news_score'):
+                    lines.append(f"     - 新闻评分: {result.macro_news_score}/100 (权重30%)")
+                if hasattr(result, 'macro_data_score'):
+                    lines.append(f"     - 数据评分: {result.macro_data_score}/100 (权重70%)")
+                lines.append(f"")
+            
             lines.append(f"   综合评分: {result.macro_score}/100")
             
             if hasattr(result, 'macro_summary') and result.macro_summary:
