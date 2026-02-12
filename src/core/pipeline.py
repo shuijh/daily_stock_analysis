@@ -183,17 +183,19 @@ class StockAnalysisPipeline:
             包含完整分析结果的字典
         """
         try:
-            logger.info(f"开始分析黄金: {code}")
+            logger.info(f"[analyze_gold] 开始分析黄金: {code}")
 
             # Step 1: 获取黄金历史数据
             # get_daily_data 返回 (DataFrame, source_name) 元组
+            logger.info(f"[{code}] 步骤1: 获取黄金历史数据...")
             df, source = self.fetcher_manager.get_daily_data(code, days=60)
+            logger.info(f"[{code}] 数据获取完成，数据源: {source}, 数据行数: {len(df) if df is not None else 0}")
             if df is None or df.empty:
-                logger.error(f"获取黄金数据失败: {code}")
+                logger.error(f"[{code}] 获取黄金数据失败: 数据为空")
                 return {"error": "获取黄金数据失败"}
-            
+
             # Step 2: 技术分析
-            logger.info(f"[{code}] 开始技术分析")
+            logger.info(f"[{code}] 步骤2: 开始技术分析...")
             technical_result = self.gold_trend_analyzer.analyze_with_macro(df, code)
             
             # 提取技术分析数据
@@ -209,7 +211,7 @@ class StockAnalysisPipeline:
             }
             
             # Step 3: 获取宏观数据
-            logger.info(f"[{code}] 开始宏观数据分析")
+            logger.info(f"[{code}] 步骤3: 开始宏观数据分析...")
             macro_data = {}
             if hasattr(technical_result, 'macro_score') and technical_result.macro_score:
                 macro_data = {
@@ -217,28 +219,38 @@ class StockAnalysisPipeline:
                     "summary": getattr(technical_result, 'macro_summary', ''),
                     "factors": getattr(technical_result, 'macro_factors', {})
                 }
-            
+                logger.info(f"[{code}] 宏观数据获取完成: score={technical_result.macro_score}")
+            else:
+                logger.info(f"[{code}] 无宏观数据")
+
             # Step 4: 搜索宏观新闻
+            logger.info(f"[{code}] 步骤4: 开始宏观新闻搜索...")
             macro_news = {}
             if self.search_service.is_available:
-                logger.info(f"[{code}] 开始宏观新闻搜索")
                 macro_news = self.search_service.search_gold_macro_news(max_results=3)
-            
+                logger.info(f"[{code}] 宏观新闻搜索完成: 获取到 {len(macro_news)} 个类别")
+            else:
+                logger.info(f"[{code}] 搜索服务不可用，跳过新闻搜索")
+
             # Step 5: AI综合分析
+            logger.info(f"[{code}] 步骤5: 开始AI综合分析...")
             ai_analysis = ""
             if self.ai_gold_analyzer:
-                logger.info(f"[{code}] 开始AI综合分析")
                 try:
                     ai_analysis = self.ai_gold_analyzer.generate_investment_report(
                         technical_data,
                         macro_data,
                         macro_news
                     )
+                    logger.info(f"[{code}] AI分析完成")
                 except Exception as e:
-                    logger.warning(f"AI分析失败: {e}")
+                    logger.warning(f"[{code}] AI分析失败: {e}")
                     ai_analysis = {"error": str(e)}
-            
+            else:
+                logger.info(f"[{code}] AI分析器未配置，跳过AI分析")
+
             # Step 6: 整合结果
+            logger.info(f"[{code}] 步骤6: 整合分析结果...")
             result = {
                 "code": code,
                 "name": "黄金",
@@ -252,8 +264,8 @@ class StockAnalysisPipeline:
                 "ai_analysis": ai_analysis,
                 "generated_at": pd.Timestamp.now().isoformat()
             }
-            
-            logger.info(f"黄金分析完成: {code}")
+
+            logger.info(f"[analyze_gold] 黄金分析完成: {code}, 结果包含字段: {list(result.keys())}")
             return result
             
         except Exception as e:
@@ -829,18 +841,22 @@ class StockAnalysisPipeline:
             logger.info(f"===== 开始分析 {len(gold_codes)} 个黄金品种 =====")
             for code in gold_codes:
                 try:
+                    logger.info(f"[{code}] 开始黄金分析流程...")
                     gold_result = self.analyze_gold(code)
+                    logger.info(f"[{code}] analyze_gold 返回结果: {type(gold_result)}, error={gold_result.get('error') if isinstance(gold_result, dict) else 'N/A'}")
                     if gold_result and "error" not in gold_result:
                         gold_results.append(gold_result)
-                        logger.info(f"[{code}] 黄金分析完成")
+                        logger.info(f"[{code}] 黄金分析完成并添加到结果列表")
                     else:
-                        logger.warning(f"[{code}] 黄金分析失败: {gold_result.get('error', '未知错误')}")
-                    
+                        error_msg = gold_result.get('error', '未知错误') if isinstance(gold_result, dict) else '返回结果无效'
+                        logger.warning(f"[{code}] 黄金分析失败: {error_msg}")
+
                     # 分析间隔
                     if analysis_delay > 0:
                         time.sleep(analysis_delay)
                 except Exception as e:
                     logger.error(f"[{code}] 黄金分析异常: {e}")
+                    logger.exception(f"[{code}] 黄金分析详细异常信息:")
         
         # 统计
         elapsed_time = time.time() - start_time
